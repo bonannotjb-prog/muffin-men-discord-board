@@ -44,8 +44,16 @@ def folders():
 
 
 def names():
+    _, ids = mcdata.stats_folder()
+    found = mcdata.player_names(ids)
+    return f"names found for {sum(1 for i in ids if i in found)} of {len(ids)} players"
+
+
+def one_stats_file():
     import json
-    return f"{len(json.loads(mcdata.read_file('/usercache.json')))} names in usercache.json"
+    folder, ids = mcdata.stats_folder()
+    row = mcdata.summarize(json.loads(mcdata.read_file(f"{folder}/{ids[0]}.json")))
+    return f"read one file: {row['minutes']} minutes played, {row['deaths']} deaths"
 
 
 results = [
@@ -53,7 +61,8 @@ results = [
     check("Panel: live resources", lambda: "state is " + mcdata.resources()["state"]),
     check("Panel: mods folder", lambda: f"{len(mcdata.mod_files())} mod files"),
     check("Panel: stats files", stats),
-    check("Panel: player names", names),
+    check("Panel: read a stats file", one_stats_file),
+    check("Player names", names),
     check("Panel: server layout", folders),
     check("Game port ping", ping),
 ]

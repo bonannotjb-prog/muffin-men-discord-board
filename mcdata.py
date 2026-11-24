@@ -39,6 +39,7 @@ SERVER_ID = SERVER_ID.rstrip("/").split("/")[-1].split("?")[0]
 
 class PanelError(Exception):
     """The panel could not be read. The message is safe to print."""
+    code = 0    # the HTTP status, when the panel answered with one
 
 
 # ------------------------------------------------------------------- panel API
@@ -55,7 +56,9 @@ def panel(path="", text=False):
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read()
     except urllib.error.HTTPError as e:
-        raise PanelError(f"panel call {label} answered HTTP {e.code}") from None
+        err = PanelError(f"panel call {label} answered HTTP {e.code}")
+        err.code = e.code
+        raise err from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise PanelError(f"panel could not be reached for {label} ({type(e).__name__})") from None
     if text:
@@ -79,7 +82,23 @@ def list_dir(folder):
 
 
 def read_file(path):
-    return panel("/files/contents?file=" + urllib.parse.quote(path, safe=""), text=True)
+    """The text of one file on the server. Tries the direct read first; if the
+    panel refuses that, asks it for a one-time download link and uses that."""
+    quoted = urllib.parse.quote(path, safe="")
+    try:
+        return panel("/files/contents?file=" + quoted, text=True)
+    except PanelError as first:
+        if first.code in (401, 403, 404):
+            raise
+        try:
+            link = panel("/files/download?file=" + quoted).get("attributes", {}).get("url")
+            if not link:
+                raise first
+            req = urllib.request.Request(link, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+        except (urllib.error.URLError, TimeoutError, OSError):
+            raise first from None
 
 
 def server_info():
@@ -204,12 +223,26 @@ def stats_folder():
     raise PanelError("no stats files found. Looked in: " + ", ".join(tried[:8]))
 
 
-def player_names():
-    """{uuid: name} from usercache.json. Empty if the file cannot be read."""
+def player_names(ids=()):
+    """{uuid: name}. Reads usercache.json on the server; any player still
+    missing is looked up with Mojang's public profile service."""
+    names = {}
     try:
-        return {u["uuid"]: u["name"] for u in json.loads(read_file("/usercache.json")) if u.get("uuid") and u.get("name")}
+        names = {u["uuid"]: u["name"] for u in json.loads(read_file("/usercache.json")) if u.get("uuid") and u.get("name")}
     except (PanelError, ValueError, TypeError, KeyError):
-        return {}
+        pass
+    for uuid in ids:
+        if uuid in names:
+            continue
+        try:
+            req = urllib.request.Request(
+                "https://sessionserver.mojang.com/session/minecraft/profile/" + uuid.replace("-", ""),
+                headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                names[uuid] = json.loads(resp.read()).get("name") or uuid[:8]
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            pass    # the board shows a short id for this player
+    return names
 
 
 def summarize(stats_json):
@@ -248,7 +281,7 @@ def all_players():
     """One dict per player: name plus the summarize() figures. A stats file that
     cannot be read is skipped, so one bad file never empties the board."""
     folder, ids = stats_folder()
-    names = player_names()
+    names = player_names(ids)
     rows = []
     for uuid in ids:
         try:
