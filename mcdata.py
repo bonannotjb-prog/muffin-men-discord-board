@@ -13,6 +13,7 @@ Settings come from environment variables (set as GitHub secrets):
 """
 import json
 import os
+import re
 import socket
 import struct
 import urllib.error
@@ -28,6 +29,12 @@ UA = "mc-discord-board/1.0 (GitHub Actions)"
 
 if PANEL_HOST and "://" not in PANEL_HOST:
     PANEL_HOST = "https://" + PANEL_HOST
+if PANEL_HOST:
+    # Keep only the site itself, so a pasted page address (…/server/abc123) still works.
+    _parts = urllib.parse.urlparse(PANEL_HOST)
+    PANEL_HOST = f"{_parts.scheme}://{_parts.netloc}"
+# The id is the last piece of whatever was pasted, so a whole page address works here too.
+SERVER_ID = SERVER_ID.rstrip("/").split("/")[-1].split("?")[0]
 
 
 class PanelError(Exception):
@@ -56,7 +63,13 @@ def panel(path="", text=False):
     try:
         return json.loads(raw) if raw else {}
     except ValueError:
-        raise PanelError(f"panel call {label} did not answer with JSON") from None
+        # A web page came back instead of data. Its title says which page, without
+        # showing the address: a login page, a "checking your browser" page, or the
+        # wrong site altogether.
+        page = raw[:20000].decode("utf-8", errors="replace")
+        title = re.search(r"<title[^>]*>(.*?)</title>", page, re.I | re.S)
+        what = f'a web page titled "{" ".join(title.group(1).split())[:80]}"' if title else "something that is not data"
+        raise PanelError(f"panel call {label} answered with {what} instead of data") from None
 
 
 def list_dir(folder):
