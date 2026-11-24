@@ -29,12 +29,32 @@ def ping():
     return f"{p['players']}/{p['max']} players, version {p['version'] or 'unknown'}"
 
 
+def folders():
+    """Top-level folder names, and what is inside each world-like one. Printed
+    so a wrong world folder name is easy to spot."""
+    top = mcdata.list_dir("/")
+    lines = ["folders: " + ", ".join(sorted(f["name"] for f in top if not f.get("is_file")))]
+    for name in mcdata.world_names()[:4]:
+        try:
+            inside = sorted(f["name"] + ("" if f.get("is_file") else "/") for f in mcdata.list_dir("/" + name))
+            lines.append(f"      inside {name}: " + ", ".join(inside[:30]))
+        except mcdata.PanelError:
+            lines.append(f"      {name}: not a folder on the server")
+    return "\n".join(lines)
+
+
+def names():
+    import json
+    return f"{len(json.loads(mcdata.read_file('/usercache.json')))} names in usercache.json"
+
+
 results = [
     check("Panel: server details", lambda: "name and limits read" if mcdata.server_info() else ""),
     check("Panel: live resources", lambda: "state is " + mcdata.resources()["state"]),
     check("Panel: mods folder", lambda: f"{len(mcdata.mod_files())} mod files"),
     check("Panel: stats files", stats),
-    check("Panel: player names", lambda: f"{len(mcdata.player_names())} names in usercache.json"),
+    check("Panel: player names", names),
+    check("Panel: server layout", folders),
     check("Game port ping", ping),
 ]
 print()

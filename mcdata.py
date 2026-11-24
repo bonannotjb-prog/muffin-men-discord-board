@@ -162,20 +162,46 @@ def ping(address=None, timeout=6):
 
 
 # ---------------------------------------------------------------- stats files
+def world_names():
+    """Folder names to try for the world, best guess first: the MC_WORLD_DIR
+    setting, the level-name line in server.properties, then every top-level
+    folder that looks like a world."""
+    names = [WORLD.strip("/")]
+    try:
+        for line in read_file("/server.properties").splitlines():
+            if line.strip().startswith("level-name"):
+                names.append(line.split("=", 1)[1].strip().strip("/"))
+    except (PanelError, IndexError):
+        pass
+    try:
+        skip = {"mods", "config", "logs", "libraries", "crash-reports", "defaultconfigs", "kubejs", "scripts"}
+        names += [f["name"] for f in list_dir("/") if not f.get("is_file") and f.get("name") not in skip
+                  and not str(f.get("name", "")).startswith(".")]
+    except PanelError:
+        pass
+    seen = []
+    for n in names:
+        if n and n not in seen:
+            seen.append(n)
+    return seen[:25]
+
+
 def stats_folder():
     """(folder, [player uuid]) for the folder that holds the stats files. Newer
     Minecraft versions keep them in players/stats, older ones in stats."""
-    problems = []
-    for folder in (f"{WORLD}/players/stats", f"{WORLD}/stats"):
-        try:
-            ids = [f["name"][:-5] for f in list_dir(folder)
-                   if f.get("is_file") and str(f.get("name", "")).endswith(".json")]
-        except PanelError as e:
-            problems.append(str(e))
-            continue
-        if ids:
-            return folder, sorted(ids)
-    raise PanelError("no stats files found in the world folder. " + "; ".join(problems))
+    tried = []
+    for world in world_names():
+        for folder in (f"/{world}/players/stats", f"/{world}/stats"):
+            try:
+                ids = [f["name"][:-5] for f in list_dir(folder)
+                       if f.get("is_file") and str(f.get("name", "")).endswith(".json")]
+            except PanelError:
+                tried.append(folder)
+                continue
+            if ids:
+                return folder, sorted(ids)
+            tried.append(folder + " (empty)")
+    raise PanelError("no stats files found. Looked in: " + ", ".join(tried[:8]))
 
 
 def player_names():
