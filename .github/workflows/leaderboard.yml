@@ -1,0 +1,59 @@
+name: Minecraft leaderboard
+
+on:
+  schedule:
+    # Every 15 minutes, off the top of the hour (GitHub runs these late when busy).
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch: {}   # adds a "Run workflow" button for manual runs
+
+permissions:
+  contents: write         # lets the job save the Discord message ids back to the repo
+
+concurrency:
+  group: mc-leaderboard
+  cancel-in-progress: false
+
+env:
+  DISCORD_LEADERBOARD_WEBHOOK_URL: ${{ secrets.DISCORD_LEADERBOARD_WEBHOOK_URL }}
+  PANEL_HOST: ${{ secrets.PANEL_HOST }}
+  PANEL_SERVER_ID: ${{ secrets.PANEL_SERVER_ID }}
+  PANEL_API_KEY: ${{ secrets.PANEL_API_KEY }}
+  MC_ADDRESS: ${{ secrets.MC_ADDRESS }}
+  MC_WORLD_DIR: "world"            # the world folder name on the server
+  MC_NAME: "Muffin Men"            # name shown in the picture headers
+  MC_TIMEZONE: "America/Phoenix"   # time zone for the "Updated" line
+  LB_SORT: "playtime"      # playtime | deaths | mobKills | playerKills | distance | mined
+  LB_TOP: "10"             # players shown, up to 15
+  LB_MIN_MINUTES: "0"      # minutes played needed to appear
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the picture tools
+        run: pip install --quiet pillow
+
+      - name: Update the leaderboard and records pictures
+        run: python leaderboard.py
+
+      - name: Save state (message ids and weekly heartbeat)
+        run: |
+          # Weekly heartbeat: this file changes once a week, so the repository always
+          # has a recent commit and GitHub never pauses the schedule for inactivity.
+          mkdir -p state
+          date -u +%G-W%V > state/heartbeat-leaderboard.txt
+          if [ -n "$(git status --porcelain state)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state
+            git commit -m "Save leaderboard state"
+            git pull --rebase
+            git push
+          fi
