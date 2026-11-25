@@ -197,6 +197,9 @@ def main():
         except (urllib.error.URLError, TimeoutError) as e:
             failures += 1
             print(f"Network error ({getattr(e, 'reason', e)}); retrying.", flush=True)
+        except Exception as e:  # noqa: BLE001 - one odd answer must not end a 5.5 hour job
+            failures += 1
+            print(f"Unexpected problem ({type(e).__name__}: {str(e)[:200]}); retrying.", flush=True)
         if failures >= 30:
             sys.exit("Giving up after 30 failed updates in a row.")
         time.sleep(max(1, INTERVAL - (time.time() - started)))
