@@ -112,3 +112,39 @@ GitHub emails the repository owner when a run fails. Run "Check connections" to 
 | 3 | `[VERIFY]` Starbase answers the standard resources and files calls | "Check connections" tests each one |
 | 4 | `[VERIFY]` Where Minecraft 26.1.2 keeps stats files | The code tries `world/players/stats`, then `world/stats`. "Check connections" prints which it found |
 | 5 | `[VERIFY]` BlueMap's port and download setting on your server | Open the map address in a browser |
+
+## Keeping the jobs running (added 2026-11-25)
+
+GitHub's timer is not reliable. It starts scheduled jobs late and, on a quiet
+repository, skips most of them. In the first two days it left the status board
+frozen for about 4 hours after most runs. `keepalive.py` adds three more ways
+for a job to get started, so the timer is now only the backup:
+
+| What | Where | What it does |
+|---|---|---|
+| Handover | last step of the status job | Starts the next status job straight away |
+| Ticker | runs beside the status loop | Every 4 minutes, reads the `cron` lines in `.github/workflows/` and starts any job whose time passed with no run |
+| Watchdog | last step of every other job | Restarts the status job if none is running, then does one ticker pass |
+| Timer | the `cron` lines | Unchanged. Still starts jobs when GitHub gets round to it |
+
+Also added:
+
+- `python keepalive.py save` saves `state/` with up to 6 tries, so two jobs saving at the
+  same moment no longer fail one of them.
+- The status loop now survives any single error and only stops after 30 failed
+  updates in a row. A stopped job restarts itself, unless it has failed four
+  times in a row within ten minutes each (then a person needs to look).
+- Message ids are saved after every post, so a later error cannot cause a
+  second copy of a board.
+
+**To stop a job:** disable its workflow on the Actions tab. Cancelling a status
+run also stops the handover, but the timer or another job's watchdog will start
+it again unless the workflow is disabled.
+
+**To test a handover:** Actions > the status workflow > Run workflow, and type
+`3` in "Minutes to run". The run ends after 3 minutes and starts the next one.
+
+**Optional alert:** add a secret named `DISCORD_ALERT_WEBHOOK_URL` (a webhook on
+a private admin channel). A failed job then posts one line there. Jobs started
+by `keepalive.py` run as `github-actions[bot]`, so GitHub does not email you
+when one of those fails. Without this secret, check the Actions tab.
