@@ -7,6 +7,7 @@ on:
   workflow_dispatch: {}   # adds a "Run workflow" button for manual runs
 
 permissions:
+  actions: write          # lets the job start other jobs (see keepalive.py)
   contents: write         # lets the job save the Discord message ids back to the repo
 
 concurrency:
@@ -49,11 +50,20 @@ jobs:
           # has a recent commit and GitHub never pauses the schedule for inactivity.
           mkdir -p state
           date -u +%G-W%V > state/heartbeat-leaderboard.txt
-          if [ -n "$(git status --porcelain state)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add state
-            git commit -m "Save leaderboard state"
-            git pull --rebase
-            git push
-          fi
+          python keepalive.py save "Save leaderboard state"
+
+      - name: Tell the admin channel if this job failed
+        if: failure()
+        env:
+          # Optional secret. Nothing is sent until it exists.
+          DISCORD_ALERT_WEBHOOK_URL: ${{ secrets.DISCORD_ALERT_WEBHOOK_URL }}
+        run: python keepalive.py alert
+
+      - name: Make sure the other jobs are running
+        # GitHub's timer skips runs. Every job that does run checks on the rest:
+        # it restarts the status job if it has stopped and starts any job whose
+        # scheduled time passed with no run. See keepalive.py.
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python keepalive.py watchdog
