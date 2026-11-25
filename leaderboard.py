@@ -110,7 +110,8 @@ def main():
             continue
         ids[slot], new = mcpost.put_file(WEBHOOK, ids.get(slot), png, filename, caption)
         print(("Posted a new" if new else "Updated the") + f" {slot} picture.")
-    if not DRY_RUN:
+        # Saved after every post, so a later problem can never lose a new message id
+        # (a lost id means a second copy of the picture is posted next time).
         mcpost.save(IDS_FILE, ids)
 
 
