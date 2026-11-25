@@ -2,16 +2,23 @@ name: Minecraft server status
 
 # How this stays close to live: GitHub cannot schedule anything faster than every
 # 5 minutes, so instead one job stays running for about 5.5 hours and checks the
-# server every 30 seconds. The schedule below only exists to start the next job.
-# Because of the concurrency group, a new job waits in line while one is running
-# and takes over within about a minute of the old one finishing.
+# server every 30 seconds. Each job starts the next one as its last step
+# (keepalive.py); the schedule below is the backup. Because of the concurrency
+# group, a new job waits in line while one is running and takes over within about
+# a minute of the old one finishing.
 
 on:
   schedule:
     - cron: "*/15 * * * *"
-  workflow_dispatch: {}   # adds a "Run workflow" button for manual runs
+  workflow_dispatch:      # the "Run workflow" button
+    inputs:
+      run_minutes:
+        description: "Minutes to run before handing over (leave empty for the normal 330)"
+        type: string
+        default: ""
 
 permissions:
+  actions: write          # lets the job start other jobs (see keepalive.py)
   contents: write         # lets the job save the Discord message ids back to the repo
 
 concurrency:
@@ -32,7 +39,7 @@ env:
   MC_SHOW_ADDRESS: "0"             # 1 = show the join address under the picture
   STATUS_INTERVAL: "30"            # seconds between checks (minimum 15)
   STATUS_REDRAW_SECONDS: "120"     # longest gap between redraws, keeps CPU and memory fresh
-  STATUS_RUN_MINUTES: "330"        # keep under the job's 6 hour limit
+  STATUS_RUN_MINUTES: ${{ inputs.run_minutes || '330' }}   # keep under the job's 6 hour limit
 
 jobs:
   status:
@@ -57,14 +64,34 @@ jobs:
           # has a recent commit and GitHub never pauses the schedule for inactivity.
           mkdir -p state
           date -u +%G-W%V > state/heartbeat-status.txt
-          if [ -n "$(git status --porcelain state)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add state
-            git commit -m "Save status state"
-            git pull --rebase
-            git push
-          fi
+          python keepalive.py save "Save status state"
 
       - name: Keep the picture updated
-        run: python status.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # The ticker runs beside the loop. Every few minutes it starts any other
+          # job whose scheduled time passed with no run (see keepalive.py).
+          python keepalive.py ticker &
+          ticker=$!
+          code=0
+          python status.py || code=$?
+          kill "$ticker" 2>/dev/null || true
+          exit "$code"
+
+      - name: Tell the admin channel if this job failed
+        if: failure()
+        env:
+          # Optional secret. Nothing is sent until it exists.
+          DISCORD_ALERT_WEBHOOK_URL: ${{ secrets.DISCORD_ALERT_WEBHOOK_URL }}
+        run: python keepalive.py alert
+
+      - name: Start the next status job
+        # Hands over straight away instead of waiting for GitHub's timer, which
+        # left the board frozen for hours. Cancelling a run stops the chain.
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+          DISCORD_ALERT_WEBHOOK_URL: ${{ secrets.DISCORD_ALERT_WEBHOOK_URL }}
+        run: python keepalive.py next
